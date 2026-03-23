@@ -1,0 +1,27 @@
+# Windows Repair Sequence - Git Ignore
+
+# Log files (generated during repair)
+*.log
+windows_repair_*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.old
