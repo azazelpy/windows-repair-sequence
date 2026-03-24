@@ -92,6 +92,14 @@ echo.
 :: ADMIN CHECK
 :: ============================================================================
 :admin_check
+
+:: ============================================================================
+:: SYSTEM INFORMATION
+:: ============================================================================
+echo %BLUE%Collecting system information...%RESET%
+echo System: %COMPUTERNAME% >> "%LOG_FILE%"
+echo OS: %OS% >> "%LOG_FILE%"
+echo.
 net session >nul 2>&1
 if %errorLevel% neq 0 (
     echo %RED%[ERROR]%RESET% This script MUST be run as Administrator!
@@ -131,6 +139,7 @@ set /p "choice=Enter your choice (1-8): "
 if "%choice%"=="1" goto full_sequence
 if "%choice%"=="2" goto step1_sfc_initial
 if "%choice%"=="3" goto step2_dism_restore
+if "%choice%"=="9" goto step2_dism_custom_source
 if "%choice%"=="4" goto step3_dism_check
 if "%choice%"=="5" goto step4_sfc_final
 if "%choice%"=="6" goto step5_reboot
@@ -307,6 +316,8 @@ echo [STEP 2] DISM RestoreHealth - %DATE% %TIME% >> "%LOG_FILE%"
 echo ------------------------------------------- >> "%LOG_FILE%"
 echo.
 echo %WHITE%Running: DISM /Online /Cleanup-Image /RestoreHealth%RESET%
+echo %YELLOW%Note: DISM connects to Windows Update for fresh files%RESET%
+echo If Windows Update is blocked, use: DISM /Online /Cleanup-Image /RestoreHealth /Source:WIM:<path>
 echo.
 echo This may take 10-30 minutes. Please wait...
 echo.
