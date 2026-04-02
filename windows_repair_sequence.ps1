@@ -27,7 +27,7 @@
     https://github.com/roberto/windows-repair-sequence
 
 .VERSION
-    2.0.0 (Security Hardened)
+    2.1.0 (Enhanced with Progress Bars + Tests)
 
 .REQUIREMENTS
     Windows Administrator privileges
@@ -159,6 +159,81 @@ function Write-Log {
     Add-Content -Path $Script:LogFile -Value $logEntry
 }
 
+# ============================================================================
+# ENHANCEMENT: Progress Bar for Long Operations
+# ============================================================================
+function Write-ProgressBar {
+    param(
+        [int]$Percent,
+        [string]$Activity,
+        [string]$Status,
+        [int]$TotalSeconds = 600  # Default 10 minutes for DISM
+    )
+    
+    $progressParams = @{
+        Id = 1
+        Activity = $Activity
+        Status = $Status
+        PercentComplete = $Percent
+        SecondsRemaining = ([math]::Max(0, $TotalSeconds * (100 - $Percent) / 100))
+    }
+    Write-Progress @progressParams
+}
+
+function Invoke-LongRunningCommand {
+    param(
+        [string]$Command,
+        [string]$Arguments,
+        [string]$Activity = "Running command",
+        [int]$EstimatedSeconds = 600
+    )
+    
+    Write-Log "[PROGRESS] Starting: $Command $Arguments"
+    
+    $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $processInfo.FileName = $Command
+    $processInfo.Arguments = $Arguments
+    $processInfo.RedirectStandardOutput = $true
+    $processInfo.RedirectStandardError = $true
+    $processInfo.UseShellExecute = $false
+    $processInfo.CreateNoWindow = $true
+    
+    $process = [System.Diagnostics.Process]::Start($processInfo)
+    
+    # Monitor progress while command runs
+    $startTime = Get-Date
+    $lastUpdate = $startTime
+    
+    while (-not $process.HasExited) {
+        $elapsed = (Get-Date) - $startTime
+        $percent = [math]::Min(99, [int]($elapsed.TotalSeconds / $EstimatedSeconds * 100))
+        
+        # Update progress bar every second
+        if ((Get-Date) -gt $lastUpdate.AddSeconds(1)) {
+            $remaining = [math]::Max(0, $EstimatedSeconds - $elapsed.TotalSeconds)
+            Write-ProgressBar -Percent $percent -Activity $Activity -Status "Running..." -TotalSeconds $remaining
+            $lastUpdate = Get-Date
+        }
+        
+        Start-Sleep -Milliseconds 500
+    }
+    
+    # Complete progress bar
+    Write-ProgressBar -Percent 100 -Activity $Activity -Status "Complete" -TotalSeconds 0
+    Start-Sleep -Milliseconds 500
+    Write-Progress -Id 1 -Completed
+    
+    $output = $process.StandardOutput.ReadToEnd()
+    $errorOutput = $process.StandardError.ReadToEnd()
+    $exitCode = $process.ExitCode
+    
+    return @{
+        Output = $output
+        Error = $errorOutput
+        ExitCode = $exitCode
+    }
+}
+
 function Test-Administrator {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
@@ -255,10 +330,19 @@ function Invoke-Step2_DISM_Restore {
 
     Write-Log "[STEP 2] DISM RestoreHealth - STARTED"
 
-    $dismOutput = DISM /Online /Cleanup-Image /RestoreHealth 2>&1
-    $dismExitCode = $LASTEXITCODE
+    # ENHANCEMENT: Use progress bar for long DISM operation (10-30 min)
+    $result = Invoke-LongRunningCommand `
+        -Command "DISM.exe" `
+        -Arguments "/Online /Cleanup-Image /RestoreHealth" `
+        -Activity "DISM System Repair" `
+        -EstimatedSeconds 1200  # 20 minutes average
+    
+    $dismOutput = $result.Output
+    $dismError = $result.Error
+    $dismExitCode = $result.ExitCode
 
-    $dismOutput | Out-String | Write-Log
+    if ($dismOutput) { $dismOutput | Out-String | Write-Log }
+    if ($dismError) { $dismError | Out-String | Write-Log }
 
     Write-Host ""
 
