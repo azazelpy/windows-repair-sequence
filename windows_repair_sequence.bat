@@ -16,10 +16,11 @@
 ::
 :: AUTHOR:     Friday (AI Assistant)
 :: CREATED:    2026-03-17
-:: UPDATED:    2026-03-23 (Fixed ANSI colors)
+:: UPDATED:    2026-04-02 (Security Hardened v2.0.0)
 :: LICENSE:    MIT License
-:: REPO:       https://github.com/roberto/windows-repair-sequence
-:: VERSION:    1.0.1
+:: REPO:       https://github.com/azazelpy/windows-repair-sequence
+:: VERSION:    2.0.0
+:: SECURITY:   Enhanced input validation, path traversal protection
 :: REQUIREMENTS: Windows Administrator privileges
 :: ============================================================================
 ::
@@ -93,10 +94,18 @@ echo.
 :: ============================================================================
 :admin_check
 
+:: SECURITY: Validate we're running from a safe path
+for %%I in ("%~dp0.") do set "SCRIPT_DIR=%%~fI"
+if not defined SCRIPT_DIR (
+    echo %RED%ERROR: Cannot determine script directory%RESET%
+    exit /b 1
+)
+
 :: ============================================================================
 :: SYSTEM INFORMATION
 :: ============================================================================
 echo %BLUE%Collecting system information...%RESET%
+echo Script Directory: %SCRIPT_DIR% >> "%LOG_FILE%"
 echo System: %COMPUTERNAME% >> "%LOG_FILE%"
 echo OS: %OS% >> "%LOG_FILE%"
 echo.
@@ -131,10 +140,42 @@ echo   [5] Run Step 4 Only: SFC Final Check
 echo   [6] Run Step 5 Only: System Reboot
 echo   [7] View Repair Log
 echo   [8] Exit
+echo   [9] DISM Custom Source
 echo.
 echo ============================================================================
 echo.
-set /p "choice=Enter your choice (1-8): "
+
+:: SECURITY: Enhanced input validation
+:main_menu_input
+set /p "choice=Enter your choice (1-9): "
+
+:: Check for empty input
+if "%choice%"=="" (
+    echo %RED%Empty choice not allowed. Please try again.%RESET%
+    timeout /t 2 /nobreak >nul
+    goto main_menu_input
+)
+
+:: Validate numeric input only
+for /f "delims=0123456789" %%i in ("%choice%") do (
+    if not "%%i"=="" (
+        echo %RED%Invalid input. Numbers only. Please try again.%RESET%
+        timeout /t 2 /nobreak >nul
+        goto main_menu_input
+    )
+)
+
+:: Validate range
+if %choice% lss 1 (
+    echo %RED%Choice too low. Please select 1-9.%RESET%
+    timeout /t 2 /nobreak >nul
+    goto main_menu_input
+)
+if %choice% gtr 9 (
+    echo %RED%Choice too high. Please select 1-9.%RESET%
+    timeout /t 2 /nobreak >nul
+    goto main_menu_input
+)
 
 if "%choice%"=="1" goto full_sequence
 if "%choice%"=="2" goto step1_sfc_initial
@@ -146,9 +187,10 @@ if "%choice%"=="6" goto step5_reboot
 if "%choice%"=="7" goto view_log
 if "%choice%"=="8" goto exit_script
 
+:: Should never reach here, but safety check
 echo %RED%Invalid choice. Please try again.%RESET%
 timeout /t 2 /nobreak >nul
-goto main_menu
+goto main_menu_input
 
 :: ============================================================================
 :: FULL 5-STEP SEQUENCE

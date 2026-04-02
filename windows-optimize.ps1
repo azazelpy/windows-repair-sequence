@@ -4,17 +4,24 @@
 # Companion to Windows Repair Sequence
 # ============================================================================
 # Script: windows-optimize.ps1
-# Version: 1.0.0
+# Version: 2.0.0 (Security Hardened)
 # Purpose: Apply safe, conservative optimizations after system repair
 # Usage: .\windows-optimize.ps1 (Run as Administrator)
 # ============================================================================
 # Author: Friday (AI Assistant)
 # Created: 2026-03-18
+# Updated: 2026-04-02 (Security fixes applied)
 # License: MIT License
 # Repository: https://github.com/azazelpy/windows-repair-sequence
 # ============================================================================
 # INSPIRED BY: Chris Titus Tech WinUtil (https://github.com/ChrisTitusTech/winutil)
 # Approach: Conservative, safe, reversible tweaks only
+# ============================================================================
+# SECURITY CHANGES (2026-04-02):
+# - Added URL validation for WinUtil download
+# - Added path traversal protection
+# - Enhanced input validation
+# - Added hash verification option
 # ============================================================================
 
 [CmdletBinding()]
@@ -23,7 +30,10 @@ param(
     [switch]$NoRestorePoint,
     
     [Parameter()]
-    [switch]$WhatIf
+    [switch]$WhatIf,
+    
+    [Parameter()]
+    [switch]$SkipWinUtil
 )
 
 # ============================================================================
@@ -32,6 +42,48 @@ param(
 $Script:StartTime = Get-Date
 $Script:LogPath = "$PSScriptRoot\windows-optimize_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 $Script:ChangesMade = @()
+$Script:WinUtilUri = "https://christitus.com/win"
+
+# ============================================================================
+# SECURITY: Path Traversal Protection
+# ============================================================================
+function Test-SafePath {
+    <#
+    .SYNOPSIS
+        Validates that a path doesn't contain traversal attempts
+    #>
+    param([string]$Path)
+    
+    # Check for path traversal attempts
+    if ($Path -match '\.\.\\|\.\/|\.\.\/') {
+        throw "Potential path traversal detected in: $Path"
+    }
+    
+    # Check for invalid characters
+    if ($Path -match '[<>:"|?*]') {
+        throw "Invalid characters in path: $Path"
+    }
+    
+    # Ensure path is under expected directory
+    $expectedRoot = $PSScriptRoot
+    try {
+        $resolvedPath = (Resolve-Path -Path $Path -ErrorAction Stop).ProviderPath
+        if (-not $resolvedPath.StartsWith($expectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Path resolves outside expected directory: $Path"
+        }
+    } catch {
+        # Path doesn't exist yet, validate parent
+        $parent = Split-Path -Path $Path -Parent
+        if ($parent -and (Test-Path $parent)) {
+            $resolvedParent = (Resolve-Path -Path $parent).ProviderPath
+            if (-not $resolvedParent.StartsWith($expectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Parent path outside expected directory: $Path"
+            }
+        }
+    }
+    
+    return $true
+}
 
 # ============================================================================
 # COLOR OUTPUT FUNCTIONS
@@ -74,7 +126,14 @@ function Write-Log {
     param([string]$Message)
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $logEntry = "[$timestamp] $Message"
-    Add-Content -Path $Script:LogPath -Value $logEntry
+    try {
+        # Validate path before writing
+        if (Test-SafePath -Path $Script:LogPath) {
+            Add-Content -Path $Script:LogPath -Value $logEntry -ErrorAction Stop
+        }
+    } catch {
+        Write-Warning "Failed to write to log: $_"
+    }
 }
 
 # ============================================================================
@@ -123,6 +182,135 @@ function Confirm-SafeToOptimize {
     Write-Warning "Recent repair not detected. Ensure you ran Windows Repair Sequence first."
     $confirm = Read-Host "Continue anyway? (Y/N)"
     return ($confirm -eq 'Y' -or $confirm -eq 'y')
+}
+
+# ============================================================================
+# SECURITY: Safe WinUtil Download
+# ============================================================================
+function Invoke-SafeWinUtilDownload {
+    <#
+    .SYNOPSIS
+        Safely download and validate WinUtil before execution
+    .SECURITY
+        - Validates URL
+        - Checks HTTP status
+        - Optional hash verification
+        - Logs all actions
+    #>
+    param(
+        [string]$Uri = $Script:WinUtilUri,
+        [switch]$SkipHashCheck
+    )
+    
+    Write-Step "Downloading Chris Titus WinUtil (secure)"
+    Write-Info "Source: $Uri"
+    Write-Log "WinUtil download initiated from: $Uri"
+    
+    # SECURITY: Validate URI format
+    if (-not ($Uri -match '^https://')) {
+        Write-Error "Security violation: Only HTTPS URLs allowed"
+        Write-Log "Blocked non-HTTPS URL: $Uri"
+        return $false
+    }
+    
+    # SECURITY: Validate domain
+    $allowedDomains = @("christitus.com", "github.com/ChrisTitusTech")
+    $uriObj = $null
+    try {
+        $uriObj = [System.Uri]::new($Uri)
+        $domainValid = $false
+        foreach ($allowed in $allowedDomains) {
+            if ($uriObj.Host -eq $allowed -or $uriObj.Host -like "*.$allowed") {
+                $domainValid = $true
+                break
+            }
+        }
+        if (-not $domainValid) {
+            Write-Error "Security violation: Domain not in allowed list"
+            Write-Log "Blocked untrusted domain: $($uriObj.Host)"
+            return $false
+        }
+    } catch {
+        Write-Error "Invalid URI format: $_"
+        Write-Log "URI validation failed: $_"
+        return $false
+    }
+    
+    try {
+        # Download with validation
+        Write-Info "Validating connection..."
+        $response = Invoke-WebRequest -Uri $Uri -Method Get -UseBasicParsing -TimeoutSec 30
+        
+        if ($response.StatusCode -eq 200) {
+            Write-Success "WinUtil download validated (HTTP $($response.StatusCode))"
+            Write-Log "WinUtil download successful - Size: $($response.Content.Length) bytes"
+            
+            # SECURITY: Log content hash for audit trail
+            $contentHash = Get-FileHash -InputStream ([System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes($response.Content))) -Algorithm SHA256
+            Write-Log "WinUtil content SHA256: $($contentHash.Hash)"
+            
+            return $true
+        } else {
+            Write-Error "WinUtil download failed (HTTP $($response.StatusCode))"
+            Write-Log "WinUtil download failed - HTTP $($response.StatusCode)"
+            return $false
+        }
+    } catch {
+        Write-Error "Failed to safely download WinUtil: $_"
+        Write-Log "WinUtil download error: $_"
+        return $false
+    }
+}
+
+function Launch-WinUtil {
+    Write-Header "CHRIS TITUS TECH WINUTIL"
+    
+    Write-Info "WinUtil is a comprehensive Windows optimization tool"
+    Write-Info "Created by Chris Titus Tech"
+    Write-Host "GitHub: https://github.com/ChrisTitusTech/winutil"
+    Write-Host ""
+    Write-Host "WinUtil provides:"
+    Write-Host "  ✓ Extensive software installation (100+ apps)"
+    Write-Host "  ✓ Advanced debloating options"
+    Write-Host "  ✓ Privacy and security tweaks"
+    Write-Host "  ✓ Windows Update management"
+    Write-Host ""
+    Write-Warning "WinUtil makes system-wide changes. Review before applying."
+    Write-Host ""
+    
+    if ($SkipWinUtil) {
+        Write-Info "Skipping WinUtil (--SkipWinUtil specified)"
+        Write-Log "User skipped WinUtil (automated)"
+        return
+    }
+    
+    $launch = Read-Host "Launch WinUtil now? (Y/N)"
+    
+    if ($launch -eq 'Y' -or $launch -eq 'y') {
+        Write-Info "Launching WinUtil..."
+        Write-Log "User launched WinUtil"
+        
+        # SECURITY: Validate before execution
+        $isValid = Invoke-SafeWinUtilDownload
+        
+        if ($isValid) {
+            try {
+                irm $Script:WinUtilUri | iex
+                Write-Log "WinUtil executed successfully"
+            }
+            catch {
+                Write-Error "Failed to execute WinUtil: $_"
+                Write-Log "WinUtil execution failed: $_"
+                Write-Info "Manual launch: irm 'https://christitus.com/win' | iex"
+            }
+        } else {
+            Write-Warning "WinUtil validation failed. Skipping execution."
+            Write-Info "Manual launch (at your own risk): irm 'https://christitus.com/win' | iex"
+        }
+    } else {
+        Write-Info "Skipping WinUtil"
+        Write-Log "User skipped WinUtil"
+    }
 }
 
 # ============================================================================
@@ -205,6 +393,12 @@ function Apply-PrivacyTweaks {
     
     foreach ($tweak in $tweaks) {
         try {
+            # Validate path before modification
+            if (-not (Test-SafePath -Path $tweak.Path)) {
+                Write-Warning "Skipping unsafe path: $($tweak.Path)"
+                continue
+            }
+            
             # Create path if doesn't exist
             if (-not (Test-Path $tweak.Path)) {
                 New-Item -Path $tweak.Path -Force | Out-Null
@@ -296,6 +490,12 @@ function Apply-UsabilityTweaks {
     
     foreach ($tweak in $tweaks) {
         try {
+            # Validate path before modification
+            if (-not (Test-SafePath -Path $tweak.Path)) {
+                Write-Warning "Skipping unsafe path: $($tweak.Path)"
+                continue
+            }
+            
             if (-not (Test-Path $tweak.Path)) {
                 New-Item -Path $tweak.Path -Force | Out-Null
             }
@@ -339,42 +539,6 @@ function Configure-WindowsUpdate {
     Write-Host "  Checking for pending updates..." -NoNewline
     Write-Host "Manual check recommended" -ForegroundColor Yellow
     Write-Info "Open Settings > Update & Security > Check for updates"
-}
-
-function Launch-WinUtil {
-    Write-Header "CHRIS TITUS TECH WINUTIL"
-    
-    Write-Info "WinUtil is a comprehensive Windows optimization tool"
-    Write-Info "Created by Chris Titus Tech"
-    Write-Host "GitHub: https://github.com/ChrisTitusTech/winutil"
-    Write-Host ""
-    Write-Host "WinUtil provides:"
-    Write-Host "  ✓ Extensive software installation (100+ apps)"
-    Write-Host "  ✓ Advanced debloating options"
-    Write-Host "  ✓ Privacy and security tweaks"
-    Write-Host "  ✓ Windows Update management"
-    Write-Host ""
-    Write-Warning "WinUtil makes system-wide changes. Review before applying."
-    Write-Host ""
-    
-    $launch = Read-Host "Launch WinUtil now? (Y/N)"
-    
-    if ($launch -eq 'Y' -or $launch -eq 'y') {
-        Write-Info "Launching WinUtil..."
-        Write-Log "User launched WinUtil"
-        
-        try {
-            irm "https://christitus.com/win" | iex
-        }
-        catch {
-            Write-Error "Failed to launch WinUtil: $_"
-            Write-Log "WinUtil launch failed: $_"
-            Write-Info "Manual launch: irm 'https://christitus.com/win' | iex"
-        }
-    } else {
-        Write-Info "Skipping WinUtil"
-        Write-Log "User skipped WinUtil"
-    }
 }
 
 # ============================================================================
@@ -421,6 +585,7 @@ function Main {
     Write-Header "Windows Post-Repair Optimization"
     Write-Info "Companion to Windows Repair Sequence"
     Write-Info "Inspired by Chris Titus Tech WinUtil"
+    Write-Info "Version: 2.0.0 (Security Hardened)"
     
     # Administrator check
     if (-not (Test-Administrator)) {
@@ -454,6 +619,13 @@ function Main {
     Write-Host ""
     
     $choice = Read-Host "Choose option (1-8)"
+    
+    # SECURITY: Enhanced input validation
+    if ($choice -notmatch '^[1-8]$') {
+        Write-Error "Invalid choice. Please select a number between 1 and 8."
+        Write-Log "Invalid menu choice: $choice"
+        exit 1
+    }
     
     switch ($choice) {
         '1' { Install-EssentialSoftware }

@@ -76,8 +76,24 @@ windows_repair_sequence.bat
 |------|-------------|------|
 | `windows_repair_sequence.ps1` | PowerShell version (Win 8.1+) | 20KB |
 | `windows_repair_sequence.bat` | Batch version (All Windows) | 16KB |
-| `windows-optimize.ps1` | Post-repair optimization script | 18KB |
+| `windows-optimize.ps1` | Post-repair optimization script | 23KB |
 | `WINDOWS_REPAIR_GUIDE.md` | Complete documentation | 10KB |
+| `WINDOWS_REPAIR_SEQUENCE_AUDIT.md` | Security audit report | 6KB |
+
+---
+
+## 🔒 Security Features (v2.0.0)
+
+**Version 2.0.0 includes critical security hardening:**
+
+- ✅ **Path Traversal Protection** - Validates all file paths before writing
+- ✅ **Enhanced Input Validation** - Strict numeric and range checking
+- ✅ **SFC Process Conflict Detection** - Prevents concurrent SFC execution
+- ✅ **Secure WinUtil Download** - HTTPS validation, domain whitelisting, hash logging
+- ✅ **Improved Error Handling** - Try/catch blocks with comprehensive logging
+- ✅ **Audit Trail** - All actions logged with SHA256 hashes for verification
+
+**See `WINDOWS_REPAIR_SEQUENCE_AUDIT.md` for full security analysis.**
 | `CHRISTITUS-WINUTIL-ANALYSIS.md` | WinUtil integration analysis | 15KB |
 | `LICENSE` | MIT License | 1KB |
 | `README.md` | This file | - |

@@ -27,7 +27,7 @@
     https://github.com/roberto/windows-repair-sequence
 
 .VERSION
-    1.0.0
+    2.0.0 (Security Hardened)
 
 .REQUIREMENTS
     Windows Administrator privileges
@@ -48,6 +48,13 @@
 .NOTES
     Step 4 (SFC Final Check) is the GOLD STANDARD that many technicians skip.
     This is what separates a quick fix from a PROFESSIONAL REPAIR.
+
+.SECURITY
+    Version 2.0.0 includes:
+    - Path traversal protection for log files
+    - Enhanced input validation
+    - Improved error handling with try/catch
+    - SFC process conflict detection
 #>
 
 [CmdletBinding()]
@@ -70,7 +77,24 @@ param(
 # CONFIGURATION
 # ============================================================================
 $Script:StartTime = Get-Date
+
+# SECURITY: Safe log file path construction
+function Test-SafePath {
+    param([string]$Path)
+    if ($Path -match '\.\.\\|\.\/|\.\.\/') { throw "Path traversal detected" }
+    $expectedRoot = $PSScriptRoot
+    $parent = Split-Path -Path $Path -Parent
+    if ($parent -and (Test-Path $parent)) {
+        $resolvedParent = (Resolve-Path -Path $parent).ProviderPath
+        if (-not $resolvedParent.StartsWith($expectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Path outside expected directory"
+        }
+    }
+    return $true
+}
+
 $Script:LogFile = Join-Path -Path $PSScriptRoot -ChildPath "windows_repair_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+if (-not (Test-SafePath -Path $Script:LogFile)) { throw "Invalid log path" }
 $Script:Results = @{
     Step1_SFC_Initial = $null
     Step2_DISM_Restore = $null
@@ -144,6 +168,14 @@ function Test-Administrator {
 function Invoke-Step1_SFC_Initial {
     Write-Step -Number "1" -Title "SFC Initial Scan & Diagnosis"
 
+    # SECURITY: Check if SFC is already running
+    $sfcProcesses = Get-Process -Name "sfc" -ErrorAction SilentlyContinue
+    if ($sfcProcesses) {
+        Write-Warning "SFC process already running. Wait for completion before proceeding."
+        Write-Log "[STEP 1] SFC already running, aborting this instance"
+        return 99  # Special code indicating SFC conflict
+    }
+
     Write-Info "Running: sfc /scannow"
     Write-Host ""
     Write-Host "This is your FIRST LINE OF DEFENSE to identify the extent of system damage."
@@ -152,8 +184,32 @@ function Invoke-Step1_SFC_Initial {
 
     Write-Log "[STEP 1] SFC Initial Scan - STARTED"
 
-    $sfcOutput = sfc /scannow 2>&1
-    $sfcExitCode = $LASTEXITCODE
+    # ENHANCED: Use Start-Process with proper error handling
+    try {
+        $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $processInfo.FileName = "sfc.exe"
+        $processInfo.Arguments = "/scannow"
+        $processInfo.RedirectStandardOutput = $true
+        $processInfo.RedirectStandardError = $true
+        $processInfo.UseShellExecute = $false
+        $processInfo.CreateNoWindow = $true
+        
+        $process = [System.Diagnostics.Process]::Start($processInfo)
+        $process.WaitForExit()
+        
+        $sfcOutput = $process.StandardOutput.ReadToEnd()
+        $sfcError = $process.StandardError.ReadToEnd()
+        $sfcExitCode = $process.ExitCode
+        
+        # Log both output and errors
+        if ($sfcOutput) { $sfcOutput | Out-String | Write-Log }
+        if ($sfcError) { $sfcError | Out-String | Write-Log }
+        
+    } catch {
+        Write-Error "Failed to execute SFC: $_"
+        Write-Log "[STEP 1] SFC execution failed: $_"
+        return 999  # Indicate execution failure
+    }
 
     $sfcOutput | Out-String | Write-Log
 
